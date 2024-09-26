@@ -5,6 +5,7 @@ import jwt from 'jsonwebtoken';
 import { connectToDB } from './database/database.js';
 import { z, ZodError } from 'zod';
 import User from './models/user.js'
+import bcrypt from 'bcrypt';
 import ResponseError from './errors/ResponseError.js'
 
 dotEnv.config();
@@ -22,8 +23,10 @@ const checkIsUserLogged = (req, res, next) => {
             if (err) {
                 return next();
             }
-            console.log(data);
+
             // jika telah login, tambah durasi cookie
+            const token = jwt.sign({ username: data.username }, secretKey, { expiresIn: 60*30 });
+            res.cookie('authToken', token, { httpOnly: 1, secure: 1 });
             return res.status(200).send({
                 "message": "Telah berhasil Login",
             })
@@ -53,7 +56,7 @@ app.use(express.urlencoded());
 app.use(express.json())
 app.use(cookieParser());
 
-const formatingErrorZod = (error)=> error.reduce(
+const formatingErrorZod = (error) => error.reduce(
     (temp, err) => {
         const field = err.path[0];
 
@@ -69,7 +72,7 @@ const formatingErrorZod = (error)=> error.reduce(
 
         if (!temp['message']) temp['message'] = err.message;
         return temp;
-    }, {'errors':{}});
+    }, { 'errors': {} });
 
 const requestLogin = z.object({
     username: z.string()
@@ -87,23 +90,22 @@ app.post('/login', checkIsUserLogged, async (req, res) => {
             throw new ResponseError({
                 "message": "Username/email tidak terdaftar",
                 "code": "ERR_USER_NOT_FOUND"
-            },404);
+            }, 404);
         }
 
-        console.log(userCheck);
-        // if () {
-        //     // untuk kesalahan required
-        //     return res.status(422).send({
-        //         "message": "Username/password salah",
-        //         "code": "ERR_WRONG_IDENTITY"
-        //     })
-        // }
+        userCheck.comparePassword(password, function (err, isMatch) {
+            if (err) throw new ResponseError({
+                "message": "Username/password salah",
+                "code": "ERR_WRONG_IDENTITY"
+            }, 400);
 
-        const token = jwt.sign({ username: 'hokahoke' }, secretKey, { expiresIn: 60 * 30 });
-        // res.cookie('authToken', token, { httpOnly: 1, secure: 1 });
-        res.status(200).send({ 'message': "great job", "token": token });
+            const token = jwt.sign({ username: username }, secretKey, { expiresIn: 60 * 30 });
+            res.cookie('authToken', token, { httpOnly: 1, secure: 1 });
+            res.status(200).send({ 'message': "great job", "token": token });
+        });
+
     } catch (err) {
-        if(err instanceof ZodError){
+        if (err instanceof ZodError) {
             return res.status(422).send(formatingErrorZod(err.errors))
         }
         return res.status(400);
