@@ -5,33 +5,49 @@ import jwt from 'jsonwebtoken';
 import { connectToDB } from './database/database.js';
 import { z, ZodError } from 'zod';
 import User from './models/user.js'
-import bcrypt from 'bcrypt';
+import cors from 'cors';
 import ResponseError from './errors/ResponseError.js'
 
 dotEnv.config();
 const app = express();
 const secretKey = process.env.JWT_SECRET ?? "panahAsmaraByChrisye";
 const portApp = process.env.BACKEND_PORT ?? 3000;
+const corsOption = {
+    methods: 'GET,POST,PUT',
+    allowedHeaders: 'Content-Type,Accept',
+    credentials: true,
+    optionsSuccessStatus: 200,
+    origin: 'http://localhost:5173'
+}
 
 connectToDB();
 
-// untuk login saja
+/**
+ * untuk endpoint login saja,
+ * jika pada cookie terdapat authToken, maka akan mengembalikan status 204 dan mengupdate cookie 
+ */
 const checkIsUserLogged = (req, res, next) => {
-    const token = req.cookies.authToken;
-    if (token) {
-        jwt.verify(token, secretKey, (err, data) => {
-            if (err) {
-                return next();
-            }
-
-            // jika telah login, tambah durasi cookie
+    try{
+        const { username, password } = requestLogin.parse(req.body);
+        const token = req.cookies.authToken;
+        if (token) {
+            jwt.verify(token, secretKey, (err, data) => {
+                if (err) {
+                    return next();
+                }
+    
+                // jika telah login, tambah durasi cookie
             const token = jwt.sign({ username: data.username }, secretKey, { expiresIn: 60*30 });
             res.cookie('authToken', token, { httpOnly: 1, secure: 1 });
-            return res.status(200).send({
-                "message": "Telah berhasil Login",
-            })
-        });
-    } else next();
+                // kembalikan 204 karena telah keadaan login
+                return res.status(204).send();
+            });
+        } else next();
+    }catch(err){
+        if (err instanceof ZodError) {
+            return res.status(422).send(formatingErrorZod(err.errors))
+        }
+    }
 }
 
 const authChecking = (req, res, next) => {
@@ -52,8 +68,9 @@ const authChecking = (req, res, next) => {
 }
 
 
+app.use(cors(corsOption));
 app.use(express.urlencoded());
-app.use(express.json())
+app.use(express.json());
 app.use(cookieParser());
 
 const formatingErrorZod = (error) => error.reduce(
@@ -84,7 +101,7 @@ app.post('/login', checkIsUserLogged, async (req, res) => {
     try {
         const { username, password } = requestLogin.parse(req.body);
         const userCheck = await User.findOne().byName(username).exec();
-
+        
         if (!userCheck) {
             // untuk kesalahan user tidak ditemukan
             throw new ResponseError({
@@ -93,22 +110,27 @@ app.post('/login', checkIsUserLogged, async (req, res) => {
             }, 404);
         }
 
-        userCheck.comparePassword(password, function (err, isMatch) {
-            if (err) throw new ResponseError({
-                "message": "Username/password salah",
-                "code": "ERR_WRONG_IDENTITY"
-            }, 400);
-
-            const token = jwt.sign({ username: username }, secretKey, { expiresIn: 60 * 30 });
-            res.cookie('authToken', token, { httpOnly: 1, secure: 1 });
-            res.status(200).send({ 'message': "great job", "token": token });
-        });
-
+        const checkPassword = await userCheck.comparePassword(password);
+        
+        if (!checkPassword) throw new ResponseError({
+            "message": "Username/password is invalid",
+            "code": "ERR_WRONG_IDENTITY"
+        }, 400);
+        
+        const token = jwt.sign({ username: username }, secretKey, { expiresIn: 60 * 30 });
+        res.cookie('authToken', token, { httpOnly: 1, secure: 1 });
+        return res.status(200).send({ 'message': "Success, now redirecting..."});
+        
     } catch (err) {
         if (err instanceof ZodError) {
             return res.status(422).send(formatingErrorZod(err.errors))
         }
-        return res.status(400);
+
+        if(err instanceof ResponseError){
+            return res.status(err.statusCode).send(err.object);
+        }
+
+        return res.status(400).send();
     }
 });
 

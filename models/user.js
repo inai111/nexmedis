@@ -23,11 +23,8 @@ userSchema.pre('save', function (next) {
     })
 });
 
-userSchema.methods.comparePassword = function (passwordString, cb) {
-    bcrypt.compare(passwordString, this.password, function (err, isMatch) {
-        if (err) return cb(err);
-        cb(null, isMatch);
-    });
+userSchema.methods.comparePassword = async function (passwordString) {
+    return await bcrypt.compare(passwordString, this.password);
 }
 
 userSchema.query.byName = function (username,cb) {
