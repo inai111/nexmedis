@@ -21,10 +21,10 @@ const app = express();
 const secretKey = process.env.JWT_SECRET ?? "panahAsmaraByChrisye";
 const portApp = process.env.BACKEND_PORT ?? 3000;
 const corsOption = {
-    methods: 'GET,POST,PUT',
+    methods: 'GET,POST,PUT,PATCH,DELETE',
     allowedHeaders: 'Content-Type,Accept',
     credentials: true,
-    optionsSuccessStatus: 200,
+    // optionsSuccessStatus: 200,
     origin: 'http://localhost:5173'
 }
 
@@ -36,7 +36,6 @@ connectToDB();
  */
 const checkIsUserLogged = (req, res, next) => {
     try {
-        const { username, password } = requestLogin.parse(req.body);
         const token = req.cookies.authToken;
         if (token) {
             jwt.verify(token, secretKey, (err, data) => {
@@ -98,7 +97,7 @@ app.post('/login', checkIsUserLogged, async (req, res) => {
             return res.status(err.statusCode).send(err.object);
         }
 
-        return res.status(400).send();
+        return res.status(500).send();
     }
 });
 
