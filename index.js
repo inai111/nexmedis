@@ -3,10 +3,18 @@ import dotEnv from 'dotenv';
 import express from 'express';
 import jwt from 'jsonwebtoken';
 import { connectToDB } from './database/database.js';
-import { z, ZodError } from 'zod';
+import { ZodError } from 'zod';
 import User from './models/user.js'
 import cors from 'cors';
 import ResponseError from './errors/ResponseError.js'
+import postRoute from './routes/post.js';
+import { formatingErrorZod } from './utils/common.js';
+import Auth from './middlewares/Auth.js';
+import CreateNewUserRequestParse from './request/CreateNewUserRequest.js';
+import SignInUserRequestParse from './request/SignInUserRequest.js';
+import post from './models/post.js';
+import user from './models/user.js';
+
 
 dotEnv.config();
 const app = express();
@@ -27,7 +35,7 @@ connectToDB();
  * jika pada cookie terdapat authToken, maka akan mengembalikan status 204 dan mengupdate cookie 
  */
 const checkIsUserLogged = (req, res, next) => {
-    try{
+    try {
         const { username, password } = requestLogin.parse(req.body);
         const token = req.cookies.authToken;
         if (token) {
@@ -35,35 +43,18 @@ const checkIsUserLogged = (req, res, next) => {
                 if (err) {
                     return next();
                 }
-    
+
                 // jika telah login, tambah durasi cookie
-            const token = jwt.sign({ username: data.username }, secretKey, { expiresIn: 60*30 });
-            res.cookie('authToken', token, { httpOnly: 1, secure: 1 });
+                const token = jwt.sign({ username: data.username }, secretKey, { expiresIn: 60 * 30 });
+                res.cookie('authToken', token, { httpOnly: 1, secure: 1 });
                 // kembalikan 204 karena telah keadaan login
                 return res.status(204).send();
             });
         } else next();
-    }catch(err){
+    } catch (err) {
         if (err instanceof ZodError) {
             return res.status(422).send(formatingErrorZod(err.errors))
         }
-    }
-}
-
-const authChecking = (req, res, next) => {
-    const token = req.cookies.authToken;
-    if (token) {
-        jwt.verify(token, secretKey, (err, data) => {
-            if (err) {
-                return next();
-            }
-            req.user = data;
-            next();
-        });
-    } else {
-        return res.status(402).send({
-            "message": "You can not access this web"
-        });
     }
 }
 
@@ -73,35 +64,12 @@ app.use(express.urlencoded());
 app.use(express.json());
 app.use(cookieParser());
 
-const formatingErrorZod = (error) => error.reduce(
-    (temp, err) => {
-        const field = err.path[0];
 
-        // check apakah index field sudah ada di temporary
-        if (!temp['errors'][field]) {
-            temp['errors'][field] = [];
-        }
-
-        // prevent message double pada satu field
-        if (temp['errors'][field].findIndex((value) => value == err.message) < 0) {
-            temp['errors'][field].push(err.message);
-        }
-
-        if (!temp['message']) temp['message'] = err.message;
-        return temp;
-    }, { 'errors': {} });
-
-const requestLogin = z.object({
-    username: z.string()
-        .min(1, "Username field is required"),
-    password: z.string()
-        .min(1, 'Password field is required')
-})
 app.post('/login', checkIsUserLogged, async (req, res) => {
     try {
-        const { username, password } = requestLogin.parse(req.body);
+        const { username, password } = SignInUserRequestParse.parse(req.body);
         const userCheck = await User.findOne().byName(username).exec();
-        
+
         if (!userCheck) {
             // untuk kesalahan user tidak ditemukan
             throw new ResponseError({
@@ -111,22 +79,22 @@ app.post('/login', checkIsUserLogged, async (req, res) => {
         }
 
         const checkPassword = await userCheck.comparePassword(password);
-        
+
         if (!checkPassword) throw new ResponseError({
             "message": "Username/password is invalid",
             "code": "ERR_WRONG_IDENTITY"
         }, 400);
-        
+
         const token = jwt.sign({ username: username }, secretKey, { expiresIn: 60 * 30 });
         res.cookie('authToken', token, { httpOnly: 1, secure: 1 });
-        return res.status(200).send({ 'message': "Success, now redirecting..."});
-        
+        return res.status(200).send({ 'message': "Success, now redirecting..." });
+
     } catch (err) {
         if (err instanceof ZodError) {
             return res.status(422).send(formatingErrorZod(err.errors))
         }
 
-        if(err instanceof ResponseError){
+        if (err instanceof ResponseError) {
             return res.status(err.statusCode).send(err.object);
         }
 
@@ -134,21 +102,9 @@ app.post('/login', checkIsUserLogged, async (req, res) => {
     }
 });
 
-
-const requestRegister = z.object({
-    username: z.string()
-        .min(4, "Username field must be at least 4 character")
-        .regex(/^[a-zA-Z0-9._]+$/, "Username can only contain letter, number, underscores and dots"),
-    password: z.string()
-        .min(8, 'Password must be at least 8 character')
-        .regex(/[a-z]/, 'Password must be at least contain uppercase, lowercase and number')
-        .regex(/[0-9]/, 'Password must be at least contain uppercase, lowercase and number')
-        .regex(/[A-Z]/, 'Password must be at least contain uppercase, lowercase and number')
-})
-
 app.post('/register', async (req, res) => {
     try {
-        const { username, password } = await requestRegister.parse(req.body);
+        const { username, password } = await CreateNewUserRequestParse.parse(req.body);
         const userCheck = await User.findOne().byName(username).exec()
         // jika username ada maka lempar ke catch
         if (userCheck) throw new ResponseError({ message: 'Username already taken' }, 400);
@@ -161,8 +117,6 @@ app.post('/register', async (req, res) => {
         res.send({ 'message': "User created" });
 
     } catch (err) {
-        let message;
-
         if (err instanceof ZodError) {
             return res.status(422).send(formatingErrorZod(err.errors));
         }
@@ -170,8 +124,47 @@ app.post('/register', async (req, res) => {
         if (err instanceof ResponseError) {
             return res.status(err.statusCode).send(err.object);
         }
+
+        res.status(500).send();
     }
 
 });
+
+app.get('/posts', async (req, res) => {
+    const filter = {};
+    const username = req.query.username;
+    if (username) {
+        filter.user = await user.findOne({ username });
+    }
+
+    try {
+        const posts = await post.find(
+            filter,
+            { comments: 0 }
+        );
+
+        const resources = posts.map(post => {
+            const item = post.toJSON();
+            item.images = item.images.map(image => `${req.get('host')}/${image}`)
+            item.liked = item.likes.includes(req.user);
+            return item;
+        })
+
+        res.send({
+            data: {
+                posts: resources
+            }
+        });
+
+    } catch (err) {
+        res.status(500).send();
+    }
+});
+
+app.get('/upload-image', Auth, (req, res) => {
+
+})
+
+app.use(postRoute)
 
 app.listen(portApp, () => console.log('run in localhost:' + portApp));
